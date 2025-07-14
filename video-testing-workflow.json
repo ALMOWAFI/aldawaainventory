@@ -1,0 +1,400 @@
+{
+  "name": "Annual Inventory - Video Testing Mode",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inventory-video-upload",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true,
+          "binaryData": true
+        }
+      },
+      "id": "video-upload-webhook",
+      "name": "📹 Video Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 400],
+      "notes": "TEST MODE: Upload inventory walkthrough video\n\nExpected data:\n- video file (MP4, MOV, AVI)\n- workerId\n- location/aisle\n- optional metadata",
+      "webhookId": "video-test-webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.VIDEO_PROCESSOR_API }}/extract-frames",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "video",
+              "value": "={{ $binary.video }}"
+            },
+            {
+              "name": "frameRate",
+              "value": 2
+            },
+            {
+              "name": "enhanceQuality",
+              "value": true
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "video-frame-extractor",
+      "name": "🎬 Extract Video Frames",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 400],
+      "notes": "Processes uploaded video:\n- Extracts frames at 2 FPS\n- Enhances image quality\n- Stabilizes shaky footage\n- Detects products in each frame"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.COMPUTER_VISION_API }}/detect-products",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "frames",
+              "value": "={{ $json.extractedFrames }}"
+            },
+            {
+              "name": "detectionMode",
+              "value": "pharmacy_products"
+            },
+            {
+              "name": "includeText",
+              "value": true
+            },
+            {
+              "name": "includeBarcodes",
+              "value": true
+            }
+          ]
+        }
+      },
+      "id": "product-detection-cv",
+      "name": "👁️ Computer Vision Product Detection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 400],
+      "notes": "AI Vision detects:\n- Product packages\n- Barcodes\n- Expiry dates (OCR)\n- Quantity counts\n- Damage indicators\n- Shelf locations"
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "split-batches",
+      "name": "📦 Split into Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [860, 400],
+      "notes": "Process products in batches to avoid overload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process each detected product\nconst detectedProducts = $input.all();\nconst processedProducts = [];\n\nfor (const item of detectedProducts) {\n  const products = item.json.detectedProducts || [];\n  \n  for (const product of products) {\n    // Extract data from video frame\n    const processedProduct = {\n      // Frame metadata\n      frameNumber: product.frameNumber,\n      timestamp: product.timestamp,\n      videoTime: `${Math.floor(product.timestamp/60)}:${(product.timestamp%60).toString().padStart(2,'0')}`,\n      \n      // Product identification\n      productId: product.barcode || product.textId || 'MANUAL_REVIEW',\n      confidence: product.confidence,\n      \n      // Visual inspection\n      quantity: product.estimatedQuantity || 1,\n      condition: product.packageCondition || 'unknown',\n      \n      // OCR results\n      rawExpiryText: product.extractedText?.expiry || '',\n      productName: product.extractedText?.name || '',\n      \n      // Location tracking\n      shelfPosition: product.location || 'unknown',\n      boundingBox: product.boundingBox,\n      \n      // Evidence\n      frameImage: product.croppedImage,\n      fullFrameImage: item.json.fullFrame,\n      \n      // Metadata\n      workerId: $node[\"video-upload-webhook\"].json.workerId,\n      location: $node[\"video-upload-webhook\"].json.location,\n      uploadId: $node[\"video-upload-webhook\"].json.uploadId\n    };\n    \n    // Flag items needing attention\n    if (product.confidence < 0.7) {\n      processedProduct.needsReview = true;\n      processedProduct.reviewReason = 'Low confidence detection';\n    }\n    \n    if (product.packageCondition === 'damaged') {\n      processedProduct.needsReview = true;\n      processedProduct.reviewReason = 'Damaged package detected';\n    }\n    \n    processedProducts.push(processedProduct);\n  }\n}\n\nreturn processedProducts;"
+      },
+      "id": "process-video-products",
+      "name": "🔄 Process Video Detections",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 400],
+      "notes": "Extracts product data from video frames:\n- Product IDs from barcodes/text\n- Quantity estimates\n- Package condition\n- Expiry date text\n- Location tracking"
+    },
+    {
+      "parameters": {
+        "content": "## 🎥 Video Testing Mode Benefits\n\n1. **No Hardware Required**: Test with phone/camera videos\n2. **Batch Processing**: Process entire aisles at once\n3. **Review & Replay**: Re-analyze problematic sections\n4. **Training Data**: Build AI training dataset\n5. **Process Refinement**: Perfect workflow before live deployment",
+        "height": 180,
+        "width": 300
+      },
+      "id": "testing-benefits",
+      "name": "Testing Benefits",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 600]
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.AI_AGENTS_API }}/product-database/identify",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "scanData",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "includeHistory",
+              "value": true
+            },
+            {
+              "name": "useFuzzyMatch",
+              "value": true
+            }
+          ]
+        }
+      },
+      "id": "ai-product-identification",
+      "name": "🤖 AI Product Identification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 400],
+      "notes": "Same Product Database Agent as before:\n- Identifies products from video data\n- Handles partial/unclear captures\n- Provides historical context"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.AI_AGENTS_API }}/decision/evaluate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "productInfo",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "videoContext",
+              "value": {
+                "frameQuality": "={{ $json.confidence }}",
+                "multipleFrames": "={{ $json.frameCount > 1 }}"
+              }
+            }
+          ]
+        }
+      },
+      "id": "ai-decision-agent",
+      "name": "🧠 AI Decision Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 400],
+      "notes": "Makes decisions based on video analysis:\n- Considers frame quality\n- Handles unclear captures\n- Flags for human review when needed"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "combine-results",
+      "name": "🔀 Combine Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1740, 400],
+      "notes": "Combines AI decisions with video evidence"
+    },
+    {
+      "parameters": {
+        "operation": "aggregate",
+        "collection": "video_test_results",
+        "query": {
+          "aggregate": [
+            {
+              "$match": {
+                "uploadId": "={{ $json.uploadId }}"
+              }
+            },
+            {
+              "$group": {
+                "_id": "$productId",
+                "count": { "$sum": 1 },
+                "frames": { "$push": "$frameNumber" },
+                "avgConfidence": { "$avg": "$confidence" }
+              }
+            }
+          ]
+        }
+      },
+      "id": "aggregate-video-results",
+      "name": "📊 Aggregate Video Results",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [1960, 400],
+      "notes": "Aggregates multiple detections of same product across video"
+    },
+    {
+      "parameters": {
+        "content": "## 🎯 How to Test\n\n1. **Record Video**: Walk through aisles with phone\n2. **Upload**: Send video via webhook\n3. **Process**: AI extracts & analyzes products\n4. **Review**: Check results in dashboard\n5. **Refine**: Adjust detection parameters\n\n**Pro Tip**: Record at 1080p, steady pace, good lighting",
+        "height": 200,
+        "width": 280
+      },
+      "id": "how-to-test",
+      "name": "How to Test",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 200]
+    },
+    {
+      "parameters": {
+        "url": "{{ $vars.DASHBOARD_API }}/video-results",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "uploadId",
+              "value": "={{ $json.uploadId }}"
+            },
+            {
+              "name": "summary",
+              "value": "={{ $json.summary }}"
+            },
+            {
+              "name": "detectedProducts",
+              "value": "={{ $json.products }}"
+            },
+            {
+              "name": "reviewRequired",
+              "value": "={{ $json.reviewItems }}"
+            },
+            {
+              "name": "videoMetadata",
+              "value": {
+                "duration": "={{ $json.videoDuration }}",
+                "framesProcessed": "={{ $json.totalFrames }}",
+                "processingTime": "={{ $json.processingTime }}"
+              }
+            }
+          ]
+        }
+      },
+      "id": "send-to-dashboard",
+      "name": "📊 Send to Review Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2180, 400],
+      "notes": "Sends results to web dashboard for review:\n- Product list with confidence scores\n- Frame snapshots for verification\n- Items flagged for manual review\n- Export to Excel/PDF"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Generate comprehensive test report\nconst results = $input.all()[0].json;\n\nconst report = {\n  testRunId: results.uploadId,\n  timestamp: new Date().toISOString(),\n  \n  summary: {\n    totalProductsDetected: results.products.length,\n    highConfidence: results.products.filter(p => p.confidence > 0.9).length,\n    mediumConfidence: results.products.filter(p => p.confidence >= 0.7 && p.confidence <= 0.9).length,\n    lowConfidence: results.products.filter(p => p.confidence < 0.7).length,\n    \n    requiresReview: results.reviewItems.length,\n    expiredFound: results.products.filter(p => p.status === 'expired').length,\n    damagedFound: results.products.filter(p => p.condition === 'damaged').length\n  },\n  \n  processingMetrics: {\n    videoDuration: results.videoDuration,\n    processingTime: results.processingTime,\n    framesPerSecond: results.totalFrames / results.processingTime,\n    productsPerMinute: (results.products.length / results.videoDuration) * 60\n  },\n  \n  recommendations: []\n};\n\n// Add recommendations based on results\nif (report.summary.lowConfidence > report.summary.totalProductsDetected * 0.2) {\n  report.recommendations.push({\n    type: 'VIDEO_QUALITY',\n    message: 'Consider better lighting or slower camera movement',\n    priority: 'HIGH'\n  });\n}\n\nif (report.summary.requiresReview > 10) {\n  report.recommendations.push({\n    type: 'MANUAL_REVIEW',\n    message: 'High number of items need manual review - consider rescanning problem areas',\n    priority: 'MEDIUM'\n  });\n}\n\nreturn [report];"
+      },
+      "id": "generate-test-report",
+      "name": "📄 Generate Test Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2180, 600],
+      "notes": "Creates detailed test report:\n- Detection statistics\n- Confidence metrics\n- Processing performance\n- Improvement recommendations"
+    }
+  ],
+  "connections": {
+    "📹 Video Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "🎬 Extract Video Frames",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎬 Extract Video Frames": {
+      "main": [
+        [
+          {
+            "node": "👁️ Computer Vision Product Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👁️ Computer Vision Product Detection": {
+      "main": [
+        [
+          {
+            "node": "📦 Split into Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Split into Batches": {
+      "main": [
+        [
+          {
+            "node": "🔄 Process Video Detections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Process Video Detections": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI Product Identification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI Product Identification": {
+      "main": [
+        [
+          {
+            "node": "🧠 AI Decision Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 AI Decision Agent": {
+      "main": [
+        [
+          {
+            "node": "🔀 Combine Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Combine Results": {
+      "main": [
+        [
+          {
+            "node": "📊 Aggregate Video Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Aggregate Video Results": {
+      "main": [
+        [
+          {
+            "node": "📊 Send to Review Dashboard",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📄 Generate Test Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "id": "video-testing",
+      "name": "Video Testing"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+} 
