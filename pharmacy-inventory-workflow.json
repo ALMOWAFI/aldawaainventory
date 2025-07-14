@@ -1,0 +1,859 @@
+{
+  "name": "Pharmacy Inventory Management",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inventory-scan",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Inventory Scan Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "inventory-scan-webhook",
+      "notes": "Receives scan data from smart glasses or mobile devices\nExpected payload: { productId, quantity, rawExpiryDate, imageUrl?, scanTimestamp, deviceId }"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-required-fields",
+              "leftValue": "={{ $json.productId && $json.quantity && $json.rawExpiryDate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-input",
+      "name": "Validate Input Data",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "Validates required fields: productId, quantity, rawExpiryDate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enhanced expiry date parsing with multiple format support\nconst parseExpiryDate = (rawText) => {\n  if (!rawText || typeof rawText !== 'string') {\n    return { success: false, error: 'No expiry date text provided' };\n  }\n\n  // Clean and normalize the input\n  const cleanText = rawText.trim().replace(/[^\\w\\s\\/\\-\\.]/g, '');\n  \n  // Common date patterns\n  const patterns = [\n    // MM/DD/YYYY, MM-DD-YYYY, MM.DD.YYYY\n    /(?<month>\\d{1,2})[\\/-\\.](?<day>\\d{1,2})[\\/-\\.](?<year>\\d{4})/,\n    // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY\n    /(?<day>\\d{1,2})[\\/-\\.](?<month>\\d{1,2})[\\/-\\.](?<year>\\d{4})/,\n    // YYYY/MM/DD, YYYY-MM-DD\n    /(?<year>\\d{4})[\\/-](?<month>\\d{1,2})[\\/-](?<day>\\d{1,2})/,\n    // MM/YY, MM-YY (assume last day of month)\n    /(?<month>\\d{1,2})[\\/-](?<year>\\d{2})/,\n    // Text formats: \"EXP 12/24\", \"BEST BY 01/25\"\n    /(?:exp|expiry|expires|best\\s*by|use\\s*by)\\s*:?\\s*(?<month>\\d{1,2})[\\/-](?<year>\\d{2,4})/i,\n    // ISO format variations\n    /(?<year>\\d{4})-(?<month>\\d{1,2})-(?<day>\\d{1,2})(?:T|\\s)/\n  ];\n\n  for (let pattern of patterns) {\n    const match = cleanText.match(pattern);\n    if (match && match.groups) {\n      let { year, month, day } = match.groups;\n      \n      // Handle 2-digit years\n      if (year && year.length === 2) {\n        const currentYear = new Date().getFullYear();\n        const currentCentury = Math.floor(currentYear / 100) * 100;\n        year = parseInt(year) + currentCentury;\n        // If year is in the past, assume next century\n        if (year < currentYear) year += 100;\n      }\n      \n      // Default day to last day of month if not provided\n      if (!day) {\n        day = new Date(parseInt(year), parseInt(month), 0).getDate();\n      }\n      \n      // Validate ranges\n      if (month < 1 || month > 12 || day < 1 || day > 31) {\n        continue;\n      }\n      \n      try {\n        const parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));\n        \n        // Verify the date is valid\n        if (parsedDate.getMonth() !== parseInt(month) - 1) {\n          continue;\n        }\n        \n        return {\n          success: true,\n          date: parsedDate.toISOString(),\n          formattedDate: parsedDate.toLocaleDateString('en-US'),\n          daysUntilExpiry: Math.ceil((parsedDate - new Date()) / (1000 * 60 * 60 * 24))\n        };\n      } catch (error) {\n        continue;\n      }\n    }\n  }\n  \n  return {\n    success: false,\n    error: `Unable to parse date from: \"${rawText}\"`,\n    rawText: rawText\n  };\n};\n\n// Process the input data\nconst inputData = $input.all()[0].json;\nconst parseResult = parseExpiryDate(inputData.rawExpiryDate);\n\n// Determine product status\nlet productStatus = 'valid';\nlet alertLevel = 'none';\nlet alertMessage = '';\n\nif (!parseResult.success) {\n  productStatus = 'unparseable_expiry';\n  alertLevel = 'critical';\n  alertMessage = `Manual review required: ${parseResult.error}`;\n} else {\n  const daysUntilExpiry = parseResult.daysUntilExpiry;\n  \n  if (daysUntilExpiry <= 0) {\n    productStatus = 'expired';\n    alertLevel = 'critical';\n    alertMessage = `EXPIRED PRODUCT: Expired ${Math.abs(daysUntilExpiry)} days ago`;\n  } else if (daysUntilExpiry <= 30) {\n    productStatus = 'near_expiry';\n    alertLevel = 'warning';\n    alertMessage = `Near expiry: ${daysUntilExpiry} days remaining`;\n  }\n}\n\n// Return enriched data\nreturn [{\n  ...inputData,\n  parsedExpiry: parseResult,\n  productStatus: productStatus,\n  alertLevel: alertLevel,\n  alertMessage: alertMessage,\n  processedTimestamp: new Date().toISOString(),\n  needsManualReview: productStatus === 'unparseable_expiry',\n  isExpired: productStatus === 'expired',\n  isNearExpiry: productStatus === 'near_expiry'\n}];"
+      },
+      "id": "parse-expiry-date",
+      "name": "Parse Expiry Date",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 180],
+      "notes": "Parses expiry dates from various text formats and determines product status"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-status",
+              "leftValue": "={{ $json.productStatus }}",
+              "rightValue": "unparseable_expiry",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-unparseable",
+      "name": "Check Unparseable Expiry",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 180],
+      "notes": "Routes items with unparseable expiry dates for manual review"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-expired",
+              "leftValue": "={{ $json.isExpired }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-expired",
+      "name": "Check Expired Products",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 380],
+      "notes": "Routes expired products for immediate alerts"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-near-expiry",
+              "leftValue": "={{ $json.isNearExpiry }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-near-expiry",
+      "name": "Check Near Expiry",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 580],
+      "notes": "Routes products nearing expiry for warning alerts"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.deviceId ? 'https://smart-glasses-api.example.com/alert/' + $json.deviceId : 'https://smart-glasses-api.example.com/broadcast' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.smartGlassesApi.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "alertType",
+              "value": "manual_review_required"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.alertMessage }}"
+            },
+            {
+              "name": "productId",
+              "value": "={{ $json.productId }}"
+            },
+            {
+              "name": "soundAlert",
+              "value": true
+            },
+            {
+              "name": "vibrationPattern",
+              "value": "short-long-short"
+            },
+            {
+              "name": "displayDuration",
+              "value": 10000
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "smart-glasses-manual-review",
+      "name": "Smart Glasses Manual Review Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 80],
+      "notes": "Triggers sound alert and visual notification on smart glasses for manual review"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.deviceId ? 'https://smart-glasses-api.example.com/alert/' + $json.deviceId : 'https://smart-glasses-api.example.com/broadcast' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.smartGlassesApi.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "alertType",
+              "value": "expired_product"
+            },
+            {
+              "name": "message",
+              "value": "CRITICAL: {{ $json.alertMessage }}"
+            },
+            {
+              "name": "productId",
+              "value": "={{ $json.productId }}"
+            },
+            {
+              "name": "soundAlert",
+              "value": true
+            },
+            {
+              "name": "vibrationPattern",
+              "value": "urgent"
+            },
+            {
+              "name": "displayDuration",
+              "value": 15000
+            },
+            {
+              "name": "backgroundColor",
+              "value": "#FF0000"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "smart-glasses-expired-alert",
+      "name": "Smart Glasses Expired Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 280],
+      "notes": "Triggers urgent alert on smart glasses for expired products"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.deviceId ? 'https://smart-glasses-api.example.com/alert/' + $json.deviceId : 'https://smart-glasses-api.example.com/broadcast' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.smartGlassesApi.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "alertType",
+              "value": "near_expiry"
+            },
+            {
+              "name": "message",
+              "value": "WARNING: {{ $json.alertMessage }}"
+            },
+            {
+              "name": "productId",
+              "value": "={{ $json.productId }}"
+            },
+            {
+              "name": "soundAlert",
+              "value": true
+            },
+            {
+              "name": "vibrationPattern",
+              "value": "gentle"
+            },
+            {
+              "name": "displayDuration",
+              "value": 8000
+            },
+            {
+              "name": "backgroundColor",
+              "value": "#FFA500"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "smart-glasses-near-expiry-alert",
+      "name": "Smart Glasses Near Expiry Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 480],
+      "notes": "Triggers warning alert on smart glasses for products nearing expiry"
+    },
+    {
+      "parameters": {
+        "url": "https://api.your-erp-system.com/inventory/update",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.erpSystem.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "productId",
+              "value": "={{ $json.productId }}"
+            },
+            {
+              "name": "quantity",
+              "value": "={{ $json.quantity }}"
+            },
+            {
+              "name": "expiryDate",
+              "value": "={{ $json.parsedExpiry.date || null }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.productStatus }}"
+            },
+            {
+              "name": "lastScanned",
+              "value": "={{ $json.processedTimestamp }}"
+            },
+            {
+              "name": "deviceId",
+              "value": "={{ $json.deviceId }}"
+            },
+            {
+              "name": "imageUrl",
+              "value": "={{ $json.imageUrl || null }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-inventory-database",
+      "name": "Update Inventory Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300],
+      "notes": "Updates the central inventory database/ERP system with scan data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if current stock level triggers reorder alert\nconst checkStockLevel = async () => {\n  const productId = $json.productId;\n  const currentQuantity = parseInt($json.quantity);\n  \n  // This would typically fetch from your inventory system\n  // For demo purposes, using mock thresholds\n  const reorderThresholds = {\n    'default': 10,\n    'medication': 5,\n    'controlled': 3\n  };\n  \n  // You would fetch product category and current total stock from your database\n  // const productInfo = await fetchProductInfo(productId);\n  \n  // Mock data for demonstration\n  const productCategory = 'medication'; // This should come from your database\n  const currentTotalStock = currentQuantity; // This should be fetched from inventory\n  const reorderThreshold = reorderThresholds[productCategory] || reorderThresholds.default;\n  \n  const needsReorder = currentTotalStock <= reorderThreshold;\n  \n  return {\n    ...($json),\n    currentTotalStock,\n    reorderThreshold,\n    needsReorder,\n    productCategory\n  };\n};\n\nreturn [await checkStockLevel()];"
+      },
+      "id": "check-stock-levels",
+      "name": "Check Stock Levels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300],
+      "notes": "Checks current stock levels against reorder thresholds"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "needs-reorder",
+              "leftValue": "={{ $json.needsReorder }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-reorder-needed",
+      "name": "Check Reorder Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 300],
+      "notes": "Routes products that need reordering to procurement alerts"
+    },
+    {
+      "parameters": {
+        "channel": "#pharmacy-procurement",
+        "text": "🚨 REORDER ALERT 🚨",
+        "attachments": [
+          {
+            "color": "warning",
+            "fields": [
+              {
+                "title": "Product ID",
+                "value": "={{ $json.productId }}",
+                "short": true
+              },
+              {
+                "title": "Current Stock",
+                "value": "={{ $json.currentTotalStock }}",
+                "short": true
+              },
+              {
+                "title": "Reorder Threshold",
+                "value": "={{ $json.reorderThreshold }}",
+                "short": true
+              },
+              {
+                "title": "Category",
+                "value": "={{ $json.productCategory }}",
+                "short": true
+              }
+            ],
+            "title": "Low Stock Alert - Immediate Reorder Required"
+          }
+        ],
+        "options": {}
+      },
+      "id": "procurement-alert",
+      "name": "Send Procurement Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [2000, 200],
+      "notes": "Sends low stock alert to procurement team via Slack"
+    },
+    {
+      "parameters": {
+        "url": "https://api.your-audit-system.com/logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.auditSystem.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "eventType",
+              "value": "inventory_scan"
+            },
+            {
+              "name": "productId",
+              "value": "={{ $json.productId }}"
+            },
+            {
+              "name": "deviceId",
+              "value": "={{ $json.deviceId }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $json.processedTimestamp }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.productStatus }}"
+            },
+            {
+              "name": "alertLevel",
+              "value": "={{ $json.alertLevel }}"
+            },
+            {
+              "name": "rawExpiryText",
+              "value": "={{ $json.rawExpiryDate }}"
+            },
+            {
+              "name": "parsedExpiry",
+              "value": "={{ $json.parsedExpiry.date || 'failed_to_parse' }}"
+            },
+            {
+              "name": "quantity",
+              "value": "={{ $json.quantity }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "audit-log",
+      "name": "Create Audit Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 500],
+      "notes": "Logs all scan activities for audit and traceability"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "weekly-report-trigger",
+      "name": "Weekly Report Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 700],
+      "notes": "Triggers weekly inventory summary report every Monday at 8 AM"
+    },
+    {
+      "parameters": {
+        "url": "https://api.your-erp-system.com/inventory/summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.erpSystem.token }}"
+            }
+          ]
+        },
+        "options": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "period",
+                "value": "week"
+              },
+              {
+                "name": "includeExpiry",
+                "value": "true"
+              },
+              {
+                "name": "includeStockLevels",
+                "value": "true"
+              }
+            ]
+          }
+        }
+      },
+      "id": "fetch-inventory-summary",
+      "name": "Fetch Inventory Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 700],
+      "notes": "Fetches weekly inventory summary data from ERP system"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate comprehensive weekly report\nconst generateReport = (data) => {\n  const summary = data.body || {};\n  \n  const reportHTML = `\n    <html>\n    <head>\n      <style>\n        body { font-family: Arial, sans-serif; margin: 20px; }\n        .header { background: #f0f8ff; padding: 20px; border-radius: 8px; }\n        .section { margin: 20px 0; padding: 15px; border-left: 4px solid #007bff; }\n        .alert { background: #fff3cd; border-left-color: #ffc107; }\n        .critical { background: #f8d7da; border-left-color: #dc3545; }\n        .success { background: #d4edda; border-left-color: #28a745; }\n        table { width: 100%; border-collapse: collapse; margin-top: 10px; }\n        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }\n        th { background-color: #f8f9fa; }\n      </style>\n    </head>\n    <body>\n      <div class=\"header\">\n        <h1>📊 Weekly Pharmacy Inventory Report</h1>\n        <p><strong>Report Period:</strong> ${summary.reportPeriod || 'Last 7 days'}</p>\n        <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>\n      </div>\n      \n      <div class=\"section success\">\n        <h2>📈 Summary Statistics</h2>\n        <ul>\n          <li><strong>Total Products Scanned:</strong> ${summary.totalScanned || 0}</li>\n          <li><strong>New Products Added:</strong> ${summary.newProducts || 0}</li>\n          <li><strong>Stock Updates:</strong> ${summary.stockUpdates || 0}</li>\n          <li><strong>Successful Scans:</strong> ${summary.successfulScans || 0}</li>\n        </ul>\n      </div>\n      \n      <div class=\"section critical\">\n        <h2>⚠️ Critical Issues</h2>\n        <table>\n          <tr><th>Issue Type</th><th>Count</th><th>Action Required</th></tr>\n          <tr><td>Expired Products</td><td>${summary.expiredCount || 0}</td><td>Remove from inventory immediately</td></tr>\n          <tr><td>Unparseable Expiry Dates</td><td>${summary.unparseableCount || 0}</td><td>Manual review required</td></tr>\n          <tr><td>Low Stock Items</td><td>${summary.lowStockCount || 0}</td><td>Reorder needed</td></tr>\n        </table>\n      </div>\n      \n      <div class=\"section alert\">\n        <h2>📅 Expiry Alerts</h2>\n        <table>\n          <tr><th>Time Period</th><th>Product Count</th><th>Recommended Action</th></tr>\n          <tr><td>Expired</td><td>${summary.expiredCount || 0}</td><td>Immediate removal</td></tr>\n          <tr><td>Next 7 days</td><td>${summary.expiring7Days || 0}</td><td>Priority sales/use</td></tr>\n          <tr><td>Next 30 days</td><td>${summary.expiring30Days || 0}</td><td>Monitor closely</td></tr>\n        </table>\n      </div>\n      \n      <div class=\"section\">\n        <h2>🔍 Quality Metrics</h2>\n        <ul>\n          <li><strong>Scan Success Rate:</strong> ${summary.scanSuccessRate || 'N/A'}%</li>\n          <li><strong>Date Parse Success Rate:</strong> ${summary.dateParseSuccessRate || 'N/A'}%</li>\n          <li><strong>Average Processing Time:</strong> ${summary.avgProcessingTime || 'N/A'} seconds</li>\n        </ul>\n      </div>\n      \n      <div class=\"section\">\n        <h2>📱 Device Usage</h2>\n        <table>\n          <tr><th>Device ID</th><th>Scans</th><th>Success Rate</th></tr>\n          ${(summary.deviceStats || []).map(device => \n            `<tr><td>${device.id}</td><td>${device.scans}</td><td>${device.successRate}%</td></tr>`\n          ).join('')}\n        </table>\n      </div>\n      \n      <p><em>This is an automated report generated by the Pharmacy Inventory Management System.</em></p>\n    </body>\n    </html>\n  `;\n  \n  return {\n    reportHTML,\n    summary,\n    reportDate: new Date().toISOString()\n  };\n};\n\nreturn [generateReport($input.all()[0].json)];"
+      },
+      "id": "generate-weekly-report",
+      "name": "Generate Weekly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 700],
+      "notes": "Generates comprehensive HTML weekly report with statistics and alerts"
+    },
+    {
+      "parameters": {
+        "fromEmail": "inventory-system@pharmacy.com",
+        "toEmail": "inventory-managers@pharmacy.com",
+        "subject": "📊 Weekly Pharmacy Inventory Report - {{ new Date().toLocaleDateString() }}",
+        "emailType": "html",
+        "message": "={{ $json.reportHTML }}",
+        "options": {
+          "attachments": [
+            {
+              "propertyName": "summary",
+              "fileName": "inventory-summary-{{ new Date().toISOString().split('T')[0] }}.json"
+            }
+          ]
+        }
+      },
+      "id": "email-weekly-report",
+      "name": "Email Weekly Report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 700],
+      "notes": "Emails weekly report to inventory managers"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"message\": \"Inventory scan processed successfully\", \"productId\": $json.productId, \"status\": $json.productStatus, \"timestamp\": $json.processedTimestamp } }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 500],
+      "notes": "Sends response back to the scanning device"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": \"Invalid input data\", \"message\": \"Required fields missing: productId, quantity, rawExpiryDate\" } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "validation-error-response",
+      "name": "Validation Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 500],
+      "notes": "Returns error response for invalid input data"
+    }
+  ],
+  "connections": {
+    "Inventory Scan Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input Data": {
+      "main": [
+        [
+          {
+            "node": "Parse Expiry Date",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validation Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Expiry Date": {
+      "main": [
+        [
+          {
+            "node": "Check Unparseable Expiry",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Expired Products",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Near Expiry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Unparseable Expiry": {
+      "main": [
+        [
+          {
+            "node": "Smart Glasses Manual Review Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Check Expired Products": {
+      "main": [
+        [
+          {
+            "node": "Smart Glasses Expired Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Check Near Expiry": {
+      "main": [
+        [
+          {
+            "node": "Smart Glasses Near Expiry Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Smart Glasses Manual Review Alert": {
+      "main": [
+        [
+          {
+            "node": "Update Inventory Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smart Glasses Expired Alert": {
+      "main": [
+        [
+          {
+            "node": "Update Inventory Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smart Glasses Near Expiry Alert": {
+      "main": [
+        [
+          {
+            "node": "Update Inventory Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Inventory Database": {
+      "main": [
+        [
+          {
+            "node": "Check Stock Levels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Stock Levels": {
+      "main": [
+        [
+          {
+            "node": "Check Reorder Needed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Reorder Needed": {
+      "main": [
+        [
+          {
+            "node": "Send Procurement Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Create Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Report Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Inventory Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Inventory Summary": {
+      "main": [
+        [
+          {
+            "node": "Generate Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Email Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "pharmacy-inventory",
+      "name": "Pharmacy Inventory"
+    }
+  ],
+  "triggerCount": 2,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+} 

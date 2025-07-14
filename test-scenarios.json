@@ -1,0 +1,434 @@
+{
+  "testScenarios": [
+    {
+      "name": "Valid Product Scan - Standard Format",
+      "description": "Test successful scanning of a product with standard date format",
+      "input": {
+        "productId": "MED-001",
+        "quantity": 10,
+        "rawExpiryDate": "12/25/2024",
+        "deviceId": "glasses-001",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "valid",
+        "alertLevel": "none",
+        "parsedExpiry": {
+          "success": true,
+          "formattedDate": "12/25/2024"
+        }
+      },
+      "expectedAlerts": [],
+      "notes": "Should process normally without alerts"
+    },
+    {
+      "name": "Expired Product Alert",
+      "description": "Test handling of an expired product",
+      "input": {
+        "productId": "MED-002",
+        "quantity": 5,
+        "rawExpiryDate": "01/10/2023",
+        "deviceId": "glasses-002",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "expired",
+        "alertLevel": "critical",
+        "isExpired": true
+      },
+      "expectedAlerts": [
+        {
+          "type": "smart_glasses_alert",
+          "alertType": "expired_product",
+          "soundAlert": true,
+          "vibrationPattern": "urgent",
+          "backgroundColor": "#FF0000"
+        }
+      ],
+      "notes": "Should trigger immediate critical alert on smart glasses"
+    },
+    {
+      "name": "Near Expiry Warning",
+      "description": "Test product expiring within 30 days",
+      "input": {
+        "productId": "MED-003",
+        "quantity": 8,
+        "rawExpiryDate": "02/10/2024",
+        "deviceId": "glasses-001",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "near_expiry",
+        "alertLevel": "warning",
+        "isNearExpiry": true
+      },
+      "expectedAlerts": [
+        {
+          "type": "smart_glasses_alert",
+          "alertType": "near_expiry",
+          "soundAlert": true,
+          "vibrationPattern": "gentle",
+          "backgroundColor": "#FFA500"
+        }
+      ],
+      "notes": "Should trigger warning alert for products expiring soon"
+    },
+    {
+      "name": "Unparseable Expiry Date",
+      "description": "Test handling of unparseable expiry date text",
+      "input": {
+        "productId": "MED-004",
+        "quantity": 3,
+        "rawExpiryDate": "sometime next year",
+        "deviceId": "glasses-003",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "unparseable_expiry",
+        "alertLevel": "critical",
+        "needsManualReview": true,
+        "parsedExpiry": {
+          "success": false,
+          "error": "Unable to parse date from: \"sometime next year\""
+        }
+      },
+      "expectedAlerts": [
+        {
+          "type": "smart_glasses_alert",
+          "alertType": "manual_review_required",
+          "soundAlert": true,
+          "vibrationPattern": "short-long-short"
+        }
+      ],
+      "notes": "Should trigger manual review alert and flag for human intervention"
+    },
+    {
+      "name": "Low Stock Alert",
+      "description": "Test low stock level triggering reorder alert",
+      "input": {
+        "productId": "MED-005",
+        "quantity": 2,
+        "rawExpiryDate": "06/15/2025",
+        "deviceId": "glasses-001",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "valid",
+        "alertLevel": "none",
+        "needsReorder": true,
+        "reorderThreshold": 5
+      },
+      "expectedAlerts": [
+        {
+          "type": "procurement_alert",
+          "channel": "#pharmacy-procurement",
+          "message": "🚨 REORDER ALERT 🚨"
+        }
+      ],
+      "notes": "Should trigger procurement alert when stock falls below threshold"
+    },
+    {
+      "name": "Alternative Date Format - EXP Label",
+      "description": "Test parsing of expiry date with EXP prefix",
+      "input": {
+        "productId": "MED-006",
+        "quantity": 15,
+        "rawExpiryDate": "EXP 03/26",
+        "deviceId": "glasses-002",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "valid",
+        "alertLevel": "none",
+        "parsedExpiry": {
+          "success": true,
+          "formattedDate": "3/31/2026"
+        }
+      },
+      "expectedAlerts": [],
+      "notes": "Should successfully parse EXP MM/YY format and assume last day of month"
+    },
+    {
+      "name": "ISO Date Format",
+      "description": "Test parsing of ISO formatted date",
+      "input": {
+        "productId": "MED-007",
+        "quantity": 7,
+        "rawExpiryDate": "2024-08-15T00:00:00Z",
+        "deviceId": "glasses-003",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": true,
+        "productStatus": "valid",
+        "alertLevel": "none",
+        "parsedExpiry": {
+          "success": true,
+          "formattedDate": "8/15/2024"
+        }
+      },
+      "expectedAlerts": [],
+      "notes": "Should handle ISO date format correctly"
+    },
+    {
+      "name": "Invalid Input Data",
+      "description": "Test validation of missing required fields",
+      "input": {
+        "productId": "MED-008",
+        "quantity": null,
+        "deviceId": "glasses-001",
+        "scanTimestamp": "2024-01-15T10:30:00Z"
+      },
+      "expectedOutput": {
+        "success": false,
+        "error": "Invalid input data",
+        "message": "Required fields missing: productId, quantity, rawExpiryDate"
+      },
+      "expectedAlerts": [],
+      "notes": "Should return 400 error for missing required fields"
+    },
+    {
+      "name": "Multiple Scenarios - Batch Test",
+      "description": "Test multiple products with different statuses",
+      "batch": [
+        {
+          "productId": "BATCH-001",
+          "quantity": 12,
+          "rawExpiryDate": "05/20/2025",
+          "expectedStatus": "valid"
+        },
+        {
+          "productId": "BATCH-002",
+          "quantity": 3,
+          "rawExpiryDate": "12/10/2023",
+          "expectedStatus": "expired"
+        },
+        {
+          "productId": "BATCH-003",
+          "quantity": 8,
+          "rawExpiryDate": "02/05/2024",
+          "expectedStatus": "near_expiry"
+        },
+        {
+          "productId": "BATCH-004",
+          "quantity": 5,
+          "rawExpiryDate": "invalid date",
+          "expectedStatus": "unparseable_expiry"
+        }
+      ],
+      "notes": "Run multiple scans to test workflow under load"
+    }
+  ],
+  "weeklyReportTest": {
+    "name": "Weekly Report Generation",
+    "description": "Test automated weekly report generation",
+    "trigger": "Manual execution of weekly report trigger",
+    "expectedSummaryData": {
+      "totalScanned": 50,
+      "newProducts": 5,
+      "stockUpdates": 45,
+      "successfulScans": 48,
+      "expiredCount": 3,
+      "unparseableCount": 2,
+      "lowStockCount": 8,
+      "expiring7Days": 12,
+      "expiring30Days": 25,
+      "scanSuccessRate": 96,
+      "dateParseSuccessRate": 94,
+      "avgProcessingTime": 1.2
+    },
+    "expectedReportSections": [
+      "Summary Statistics",
+      "Critical Issues",
+      "Expiry Alerts",
+      "Quality Metrics",
+      "Device Usage"
+    ],
+    "notes": "Should generate comprehensive HTML report and email to managers"
+  },
+  "performanceTests": [
+    {
+      "name": "High Volume Scanning",
+      "description": "Test workflow performance under high load",
+      "scenario": "100 concurrent scan requests",
+      "expectedResponseTime": "< 2 seconds per request",
+      "expectedSuccessRate": "> 99%",
+      "notes": "Monitor workflow execution times and error rates"
+    },
+    {
+      "name": "Large Date Parsing Test",
+      "description": "Test date parsing with various edge cases",
+      "testCases": [
+        "12/31/99",
+        "BEST BY 01/25",
+        "USE BY: 06-15-2024",
+        "EXP: 2024/12/31",
+        "31.12.2024",
+        "Dec 31, 2024",
+        "2024-12-31T23:59:59Z",
+        "invalid",
+        "",
+        null
+      ],
+      "expectedParsed": 7,
+      "expectedFailed": 3,
+      "notes": "Validate robustness of date parsing logic"
+    }
+  ],
+  "integrationTests": [
+    {
+      "name": "Smart Glasses API Integration",
+      "description": "Test smart glasses alert functionality",
+      "testSteps": [
+        "Send expired product alert",
+        "Verify device receives alert",
+        "Check alert display and sound",
+        "Confirm alert acknowledgment"
+      ],
+      "mockApiResponses": {
+        "alertSuccess": {
+          "success": true,
+          "messageId": "alert-12345",
+          "deviceId": "test-device-001",
+          "status": "delivered"
+        },
+        "deviceOffline": {
+          "success": false,
+          "error": {
+            "code": "device_offline",
+            "message": "Device test-device-001 is offline"
+          }
+        }
+      }
+    },
+    {
+      "name": "ERP System Integration",
+      "description": "Test inventory database updates",
+      "testSteps": [
+        "Send valid scan data",
+        "Verify database update request",
+        "Check inventory record creation/update",
+        "Validate audit trail entry"
+      ],
+      "mockApiResponses": {
+        "updateSuccess": {
+          "success": true,
+          "recordId": "inv-12345",
+          "timestamp": "2024-01-15T10:30:00Z"
+        }
+      }
+    },
+    {
+      "name": "Slack Notification Integration",
+      "description": "Test procurement alert delivery",
+      "testSteps": [
+        "Trigger low stock scenario",
+        "Verify Slack webhook call",
+        "Check message formatting",
+        "Confirm delivery to correct channel"
+      ]
+    }
+  ],
+  "errorHandlingTests": [
+    {
+      "name": "API Timeout Handling",
+      "description": "Test behavior when external APIs are slow/unresponsive",
+      "scenarios": [
+        {
+          "api": "Smart Glasses API",
+          "timeout": "30 seconds",
+          "expectedBehavior": "Continue workflow, log error"
+        },
+        {
+          "api": "ERP System API",
+          "timeout": "60 seconds",
+          "expectedBehavior": "Retry 3 times, then fail gracefully"
+        }
+      ]
+    },
+    {
+      "name": "Network Connectivity Issues",
+      "description": "Test workflow resilience to network problems",
+      "scenarios": [
+        "Complete network loss",
+        "Intermittent connectivity",
+        "DNS resolution failures",
+        "SSL certificate errors"
+      ],
+      "expectedBehavior": "Queue requests for retry when connectivity restored"
+    }
+  ],
+  "securityTests": [
+    {
+      "name": "Authentication Validation",
+      "description": "Test API security and credential handling",
+      "testCases": [
+        {
+          "scenario": "Invalid API token",
+          "expectedResponse": "401 Unauthorized"
+        },
+        {
+          "scenario": "Missing authorization header",
+          "expectedResponse": "401 Unauthorized"
+        },
+        {
+          "scenario": "Expired token",
+          "expectedResponse": "401 Unauthorized"
+        }
+      ]
+    },
+    {
+      "name": "Input Sanitization",
+      "description": "Test handling of malicious input data",
+      "testCases": [
+        {
+          "input": {
+            "productId": "<script>alert('xss')</script>",
+            "quantity": 5,
+            "rawExpiryDate": "12/25/2024"
+          },
+          "expectedBehavior": "Sanitize and process safely"
+        },
+        {
+          "input": {
+            "productId": "'; DROP TABLE products; --",
+            "quantity": 5,
+            "rawExpiryDate": "12/25/2024"
+          },
+          "expectedBehavior": "Escape SQL injection attempts"
+        }
+      ]
+    }
+  ],
+  "usageInstructions": {
+    "testingWorkflow": [
+      "1. Import the workflow JSON into n8n",
+      "2. Configure all required credentials",
+      "3. Update API endpoints with your test URLs",
+      "4. Start with basic valid scan test",
+      "5. Progress through error scenarios",
+      "6. Test integration with external systems",
+      "7. Validate reporting functionality",
+      "8. Perform load testing if needed"
+    ],
+    "mockingExternalAPIs": [
+      "Use tools like Postman Mock Server or json-server",
+      "Create test endpoints that return expected responses",
+      "Simulate various error conditions",
+      "Test rate limiting and timeout scenarios"
+    ],
+    "monitoringTestExecution": [
+      "Check n8n execution logs for each test",
+      "Monitor API call success/failure rates",
+      "Validate alert delivery to all channels",
+      "Verify audit log entries are created",
+      "Test report generation and email delivery"
+    ]
+  }
+} 
