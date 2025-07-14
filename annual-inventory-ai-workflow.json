@@ -1,0 +1,357 @@
+{
+  "name": "Annual Pharmacy Inventory AI Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "annual-inventory-scan",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "inventory-scan-webhook",
+      "name": "🔍 Inventory Scan Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 400],
+      "notes": "Receives scan data from smart glasses or mobile devices during annual inventory\n\nExpected payload:\n- productId/barcode\n- quantity\n- location\n- scanImage (base64)\n- deviceId\n- workerId",
+      "webhookId": "annual-inventory-webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.AI_AGENTS_API }}/product-database/identify",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "scanData",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "includeHistory",
+              "value": true
+            },
+            {
+              "name": "predictExpiry",
+              "value": true
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "product-database-agent",
+      "name": "🤖 Product Database Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 400],
+      "notes": "AI Agent 1: Product Identification\n\n✓ Identifies product from scan\n✓ Retrieves historical data\n✓ Predicts expiry patterns\n✓ Flags special handling needs\n\nHandles:\n- Damaged barcodes\n- Partial scans\n- Product variations"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.AI_AGENTS_API }}/decision/evaluate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "productInfo",
+              "value": "={{ $json.productData }}"
+            },
+            {
+              "name": "scanContext",
+              "value": "={{ $json.scanContext }}"
+            },
+            {
+              "name": "inventoryRules",
+              "value": "={{ $vars.INVENTORY_RULES }}"
+            }
+          ]
+        }
+      },
+      "id": "decision-ai-agent",
+      "name": "🧠 Decision AI Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 400],
+      "notes": "AI Agent 2: Intelligent Decision Making\n\n✓ Evaluates product status\n✓ Determines required actions\n✓ Assesses risk levels\n✓ Flags edge cases\n\nDecision Types:\n- EXPIRED_PRODUCT → Quarantine\n- NEAR_EXPIRY → Flag for sale\n- DAMAGED → Human review\n- QUANTITY_MISMATCH → Verify\n- RECALLED → Immediate action"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.AI_AGENTS_API }}/review/validate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "decision",
+              "value": "={{ $json.decision }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "complianceRules",
+              "value": "={{ $vars.COMPLIANCE_RULES }}"
+            }
+          ]
+        }
+      },
+      "id": "review-ai-agent",
+      "name": "🔍 Review AI Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 400],
+      "notes": "AI Agent 3: Decision Validation\n\n✓ Double-checks AI decisions\n✓ Ensures compliance\n✓ Validates logic\n✓ Reduces error rate\n\nValidation includes:\n- Regulatory compliance\n- Business rule adherence\n- Logical consistency\n- Risk assessment"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-human-needed",
+              "leftValue": "={{ $json.requiresHumanReview }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "human-review-router",
+      "name": "👤 Human Review Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1080, 400],
+      "notes": "Routes to human review for:\n- High-risk decisions\n- Uncertain AI predictions\n- Regulatory requirements\n- Complex edge cases"
+    },
+    {
+      "parameters": {
+        "taskType": "inventory_decision",
+        "assignTo": "={{ $json.recommendedReviewer || 'inventory_team' }}",
+        "priority": "={{ $json.urgency }}",
+        "taskData": {
+          "productInfo": "={{ $json.productInfo }}",
+          "aiRecommendation": "={{ $json.decision }}",
+          "scanImage": "={{ $json.scanImage }}",
+          "riskFactors": "={{ $json.riskFactors }}",
+          "historicalData": "={{ $json.historicalData }}"
+        },
+        "interface": {
+          "title": "🔍 Inventory Decision Required",
+          "description": "={{ $json.reviewReason }}",
+          "actions": [
+            {
+              "id": "approve",
+              "label": "✅ Approve AI Decision",
+              "style": "success"
+            },
+            {
+              "id": "override",
+              "label": "🔄 Override Decision",
+              "style": "warning",
+              "requiresInput": true
+            },
+            {
+              "id": "escalate",
+              "label": "⚠️ Escalate to Manager",
+              "style": "danger"
+            }
+          ]
+        },
+        "notifications": {
+          "mobile": true,
+          "smartGlasses": true,
+          "email": false
+        },
+        "timeout": "5m"
+      },
+      "id": "human-task-node",
+      "name": "👤 Human Task Interface",
+      "type": "n8n-nodes-base.humanTask",
+      "typeVersion": 1,
+      "position": [1300, 300],
+      "notes": "NEW n8n Human Task Node!\n\n✓ Mobile-friendly interface\n✓ Smart glasses integration\n✓ Real-time notifications\n✓ Decision tracking\n\nFeatures:\n- Photo evidence display\n- AI recommendation shown\n- Override with reason\n- Escalation path"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.COMPUTER_VISION_API }}/monitor",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "storeArea",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "detectionTypes",
+              "value": ["spill", "fall", "crowd", "fire", "suspicious_activity"]
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batchSize": 10,
+            "batchInterval": 1000
+          }
+        }
+      },
+      "id": "computer-vision-sos",
+      "name": "📹 Computer Vision SOS Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 600],
+      "notes": "AI Agent 4: Store Safety Monitoring\n\n✓ Detects emergencies\n✓ Monitors for spills\n✓ Tracks crowd levels\n✓ Identifies hazards\n\nSOS Detection:\n- Customer falls\n- Product spills\n- Fire/smoke\n- Overcrowding\n- Suspicious behavior"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-sos",
+              "leftValue": "={{ $json.sosDetected }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "sos-alert-router",
+      "name": "🚨 SOS Alert Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [860, 600],
+      "notes": "Routes emergency alerts for immediate action"
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.EMERGENCY_SYSTEM }}/alert",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "alertType",
+              "value": "={{ $json.sosType }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "severity",
+              "value": "{{ $json.severity }}"
+            },
+            {
+              "name": "evidence",
+              "value": "={{ $json.screenshot }}"
+            }
+          ]
+        }
+      },
+      "id": "emergency-response",
+      "name": "🚨 Emergency Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 700],
+      "notes": "Triggers immediate emergency response:\n- Notifies security\n- Alerts management\n- Logs incident\n- Initiates protocols"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Learning from human decisions\nconst humanDecision = $input.all()[0].json;\n\nif (humanDecision.action === 'override') {\n  // Update AI models with human feedback\n  const feedback = {\n    originalDecision: humanDecision.aiRecommendation,\n    humanOverride: humanDecision.overrideDecision,\n    reason: humanDecision.overrideReason,\n    context: humanDecision.context,\n    timestamp: new Date().toISOString()\n  };\n  \n  // This helps AI learn from human expertise\n  await $http.post($vars.AI_AGENTS_API + '/learn/feedback', {\n    body: feedback\n  });\n}\n\n// Process the final decision\nreturn [{\n  ...humanDecision,\n  finalDecision: humanDecision.action === 'approve' \n    ? humanDecision.aiRecommendation \n    : humanDecision.overrideDecision,\n  processedBy: 'human_review',\n  learningCaptured: true\n}];"
+      },
+      "id": "ai-learning-feedback",
+      "name": "🧠 AI Learning Feedback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 300],
+      "notes": "Captures human decisions to improve AI:\n- Tracks overrides\n- Records reasoning\n- Updates ML models\n- Improves accuracy over time"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "collection": "inventory_annual_2024",
+        "updateKey": "productId",
+        "fields": {
+          "values": [
+            {
+              "name": "productId",
+              "value": "={{ $json.productId }}"
+            },
+            {
+              "name": "quantity",
+              "value": "={{ $json.quantity }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "expiryDate",
+              "value": "={{ $json.expiryDate }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.finalDecision.status }}"
+            },
+            {
+              "name": "lastScanned",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "scannedBy",
+              "value": "={{ $json.workerId }}"
+            },
+            {
+              "name": "aiConfidence",
+              "value": "={{ $json.aiConfidence }}"
+            },
+            {
+              "name": "humanReviewed",
+              "value": "={{ $json.processedBy === 'human_review' }}"
+            }
+          ]
+        },
+        "options": {
+          "upsert": true
+        }
+      },
+      "id": "update-inventory-db",
+      "name": "💾 Update Inventory Database",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [1740, 400],
+      "notes": "Updates annual inventory database:\n- Product quantities\n- Expiry dates\n- Location tracking\n- Status flags\n- Audit trail"
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Real-time Dashboard Integration\n\nThis node sends data to your live dashboard showing:\n- Inventory progress (% complete)\n- Products scanned per hour\n- Edge cases found\n- Human interventions\n- AI accuracy metrics\n- Worker productivity",
+        "height": 150,
+        "width": 250
+      },
+      "id": "dashboard-note",
+      "name": "Dashboard Integration",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1960, 350]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Edge case detection and handling\nconst product = $input.all()[0].json;\nconst edgeCases = [];\n\n// 1. Damaged Products\nif (product.condition?.includes('damaged')) {\n  edgeCases.push({\n    type: 'DAMAGED_PRODUCT',\n    severity: 'high',\n    action: 'capture_photo_evidence',\n    requiresHuman: true\n  });\n}\n\n// 2. Quantity Mismatch\nif (Math.abs(product.scannedQty - product.systemQty) > 5) {\n  edgeCases.push({\n    type: 'QUANTITY_MISMATCH',\n    severity: 'medium',\n    action: 'recount_required',\n    requiresHuman: true\n  });\n}\n\n// 3. Recalled Products\nif (product.recallStatus) {\n  edgeCases.push({\n    type: 'RECALLED_PRODUCT',\n    severity: 'critical',\n    action: 'immediate_quarantine',\n    requiresHuman: true\n  });\n}\n\n// 4. Controlled Substances\nif (product.isControlled) {\n  edgeCases.push({\n    type: 'CONTROLLED_SUBSTANCE',\n    severity: 'high',\n    action 
